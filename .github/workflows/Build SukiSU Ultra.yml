@@ -315,28 +315,32 @@ jobs:
           
           echo "✅ SukiSU Ultra配置完成"
           
-      - name: "🩹 Fix selinux_hide undefined symbol | 修复 selinux_hide 未定义符号"
+      - name: "🩹 Fix selinux_hide undefined symbols | 修复 selinux_hide 未定义符号"
         run: |
           set -e
           F=kernel_workspace/kernel_platform/KernelSU/kernel/feature/selinux_hide.c
           echo "🔍 检查文件: $F"
           test -f "$F" || { echo "❌ 找不到 selinux_hide.c，路径可能已变动"; exit 1; }
 
-          echo "🛠️ 还原 security_dump_masked_av_fn 为强引用(该符号内核中已存在)..."
-          sed -i 's/extern __weak void security_dump_masked_av_fn(/extern void security_dump_masked_av_fn(/' "$F"
+          echo "🛠️ 清除 __weak 残留(弱引用会产生 GOT/PLT，内核不允许)..."
+          sed -i 's/extern __weak void /extern void /' "$F"
 
-          echo "🛠️ 将 context_struct_compute_av_fn 分支改为 if (0) 消除引用..."
-          sed -i 's/extern __weak void context_struct_compute_av_fn(/extern void context_struct_compute_av_fn(/' "$F"
-          sed -i 's|if ((void \*)context_struct_compute_av_fn != NULL)|if (0)|' "$F"
+          echo "🛠️ 将所有 _fn 外部符号的探测分支改为 if (0)..."
+          SYMS=$(grep -oE '^extern (void|int) [A-Za-z_][A-Za-z0-9_]*_fn\(' "$F" | sed -E 's/^extern (void|int) //; s/\($//') || true
+          echo "🔎 待处理符号:"; echo "$SYMS"
+          for S in $SYMS; do
+            sed -i "s|if ((void \*)$S != NULL)|if (0)|" "$F"
+          done
 
-          if grep -q 'if ((void \*)context_struct_compute_av_fn != NULL)' "$F"; then
-            echo "❌ sed 未生效，上游代码可能已重构，请检查 selinux_hide.c"
+          if grep -q 'if ((void \*)' "$F"; then
+            echo "❌ 仍有未处理的外部符号探测分支，请检查 selinux_hide.c"
+            grep -n 'if ((void \*)' "$F"
             exit 1
           fi
 
           echo "--- 修改结果 ---"
-          grep -n "context_struct_compute_av_fn\|security_dump_masked_av_fn" "$F"
-          echo "✅ selinux_hide 未定义符号修复完成(不引入 GOT/PLT)"
+          grep -n "_fn" "$F"
+          echo "✅ selinux_hide 未定义符号修复完成"
 
       - name: "🔧 Setup Patches | 配置补丁"
         run: |
